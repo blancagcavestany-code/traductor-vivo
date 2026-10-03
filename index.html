@@ -65,6 +65,17 @@
     flex: 0 0 auto;
   }
   .iconbtn.active { background: var(--accent); color: #063; }
+  #fsDown { background:#303941; color:#d6e2e8; }
+  #fsUp { background:#393449; color:#e0d6ee; }
+  #eyeBtn { background:#293a43; color:#c4e2ec; }
+  #voiceBtn { background:#352f43; color:#d9c9ed; }
+  #historyBtn { background:#2c3d36; color:#c8e5d4; }
+  #copyBtn { background:#443a2d; color:#ead8b8; }
+  #clearBtn { background:#432f33; color:#f1c5cc; }
+  #videoModeBtn { background:#30384b; color:#d0dbf5; }
+  #eyeBtn.active { background:#3b6250; color:#e4f4e9; }
+  #voiceBtn.active { background:#58466c; color:#f0e6fa; }
+  #videoModeBtn.active { background:#465a78; color:#eef3ff; }
 
   .status {
     display: flex;
@@ -169,7 +180,7 @@
   .history-original { color:#a6a8af; font-size:14px; line-height:1.35; }
   .history-translation { font-size:17px; line-height:1.35; font-weight:600; margin-top:3px; }
   .history-empty { padding:18px 4px; color:var(--muted); text-align:center; }
-  .history-close { padding:8px 12px; border:0; border-radius:9px; background:var(--card2); color:var(--text); }
+  .history-close { padding:8px 12px; border:0; border-radius:9px; background:#303941; color:#d6e2e8; }
 </style>
 </head>
 <body>
@@ -206,7 +217,7 @@
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
 <button class="iconbtn" id="videoModeBtn" style="width:100%;height:38px" title="Optimizar la escucha de audio por altavoz">🎬 Audio de vídeo externo</button>
-<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v13</div>
+<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v14</div>
 <div class="hint" id="historyHint">El historial se guarda en este móvil durante 7 días.</div>
 
 <dialog id="historyDialog" aria-labelledby="historyTitle">
@@ -907,7 +918,7 @@ $('videoModeBtn').onclick = () => {
   applyPrefs();
   $('hint').textContent = videoMode
     ? 'Reproduce el vídeo por altavoz cerca del móvil; evita los auriculares.'
-    : 'Inglés → español · necesita internet y permiso de micrófono · v13';
+    : 'Inglés → español · necesita internet y permiso de micrófono · v14';
 };
 $('historyBtn').onclick = () => {
   renderHistoryView();
