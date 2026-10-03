@@ -392,6 +392,38 @@ const normalize = t => t.toLowerCase().normalize('NFD')
    repetidos. Si la frase nueva empieza por la anterior, es la misma creciendo:
    se sustituye esa linea en vez de anadir otra. */
 const CRECIMIENTO_MS = 15000;
+const REPETICION_MS = 60000;
+
+/* Cuando el reconocimiento se reinicia puede volver a enviar varios fragmentos
+   ya mostrados, empezando por uno anterior al último. Busca esa repetición en
+   las líneas recientes y también en grupos contiguos de fragmentos. */
+function quitarRepeticionReciente(texto, norm, now) {
+  const desde = Math.max(0, lines.length - 10);
+  let mejor = 0;
+  let esPrefijoCorto = false;
+
+  for (let i = desde; i < lines.length; i++) {
+    let unido = '';
+    for (let j = i; j < lines.length && j < i + 6; j++) {
+      if (now - lines[j].at > REPETICION_MS) break;
+      unido = unido ? unido + ' ' + lines[j].norm : lines[j].norm;
+      const palabras = unido.split(' ').filter(Boolean).length;
+      if (palabras < 6 || palabras <= mejor) continue;
+
+      if (norm === unido || unido.startsWith(norm + ' ')) {
+        mejor = norm.split(' ').filter(Boolean).length;
+        esPrefijoCorto = true;
+      } else if (norm.startsWith(unido + ' ')) {
+        mejor = palabras;
+        esPrefijoCorto = false;
+      }
+    }
+  }
+
+  if (!mejor) return texto;
+  if (esPrefijoCorto) return '';
+  return quitarPalabras(texto, mejor);
+}
 
 /* Cuantas palabras del final de A coinciden con el principio de B.
    Al reiniciarse, Android repite el final de lo anterior:
@@ -431,11 +463,14 @@ function extender(prev, textoCompleto, normCompleta) {
 }
 
 function pushFinal(text) {
-  const t = text.trim();
+  let t = text.trim();
   if (!t) return;
-  const norm = normalize(t);
+  let norm = normalize(t);
   if (!norm) return;
   const now = Date.now();
+  t = quitarRepeticionReciente(t, norm, now);
+  if (!t) return;
+  norm = normalize(t);
   const prev = lines[lines.length - 1];
 
   if (prev && now - prev.at < CRECIMIENTO_MS) {
