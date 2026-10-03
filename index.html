@@ -181,7 +181,7 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v8</div>
+<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v9</div>
 
 <script>
 'use strict';
@@ -602,7 +602,11 @@ function build() {
       stop('Micrófono denegado. Permítelo en los ajustes del navegador.', 'err');
       return;
     }
-    if (ev.error === 'network') { setStatus('Sin conexión · reintentando…', 'err'); return; }
+    if (ev.error === 'network') {
+      setStatus('Problema de conexión · reanudando escucha…', 'err');
+      restart(1200);
+      return;
+    }
     if (ev.error === 'language-not-supported') {
       stop('Tu móvil no soporta ' + srcLang().name + '. Prueba otro idioma.', 'err');
       return;
@@ -610,16 +614,16 @@ function build() {
     setStatus('Error: ' + ev.error + ' · reintentando…', 'err');
   };
 
-  r.onend = () => { if (listening) restart(); };
+  r.onend = () => { if (listening && recognition === r) restart(); };
   return r;
 }
 
-function restart() {
+function restart(waitMs = 0) {
   if (restartTimer !== null) return;
   const now = Date.now();
   if (now - restartWindow > 10000) { restarts = 0; restartWindow = now; }
   restarts++;
-  const delay = restarts > 6 ? 1500 : 0;   // sin pausa: cada ms de corte es audio perdido      // evita bucle de reinicios
+  const delay = Math.max(restarts > 6 ? 1500 : 0, waitMs);
   restartTimer = setTimeout(() => {
     restartTimer = null;
     if (!listening) return;
@@ -634,12 +638,14 @@ function restart() {
   }, delay);
 }
 
-/* vigilante: si Chrome/Safari se queda mudo sin avisar, reinicia */
+/* Vigilante: algunos navegadores no emiten onend después de abortar. */
 setInterval(() => {
   if (!listening) return;
   if (Date.now() - lastActivity > 20000) {
     lastActivity = Date.now();
-    try { recognition.abort(); } catch (e) {}   // onend dispara restart()
+    setStatus('Reanudando la escucha…', 'on');
+    try { recognition.abort(); } catch (e) {}
+    restart(1000);                  // respaldo si abort() no dispara onend
   }
 }, 5000);
 
