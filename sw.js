@@ -1,6 +1,6 @@
 /* Cachea la app para que abra al instante y sin red.
    La traduccion y el reconocimiento de voz SI necesitan internet. */
-const CACHE = 'traductor-v3';
+const CACHE = 'traductor-v4';
 const SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {

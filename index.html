@@ -371,9 +371,30 @@ function render() {
 const queue = [];
 let draining = false;
 
+let recent = [];   // ultimas frases aceptadas, para no repetirlas
+
+/* Deja solo letras y numeros: asi "Suivez-moi." y "suivez moi" son la misma frase.
+   Android reenvia lo mismo con distinta puntuacion despues de cada reinicio. */
+const normalize = t => t.toLowerCase().normalize('NFD')
+  .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
 function pushFinal(text) {
   const t = text.trim();
   if (!t) return;
+  const norm = normalize(t);
+  const now = Date.now();
+  /* El reenvio de Android llega en milisegundos o tras un reinicio (~1-2 s).
+     Frases largas: ventana amplia. Palabras sueltas ("si", "vale"): ventana corta,
+     para no tragarse una repeticion de verdad del guia. */
+  const ventana = norm.length >= 12 ? 8000 : 2500;
+  const ultima = recent[recent.length - 1];
+  /* Solo bloquea el calco de la frase anterior: el reenvio de Android siempre es
+     consecutivo. Si el guia dice "oui... non... oui", el segundo "oui" si pasa. */
+  if (norm && ultima && ultima.norm === norm && now - ultima.at < ventana) return;
+  recent.push({ norm, at: now });
+  if (recent.length > 3) recent.shift();
   lines.push({ orig: t, trad: '', done: false });
   if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES);
   const idx = lines.length - 1;
@@ -423,6 +444,28 @@ function setLive(text) {
 }
 
 /* ============ reconocimiento ============ */
+/* Cuantos resultados definitivos lleva ya procesados ESTA sesion de escucha.
+   Android reenvia la lista entera en cada evento: sin este contador,
+   cada frase se anadiria una y otra vez. */
+let processedCount = 0;
+
+function processResults(results) {
+  let interim = '';
+  for (let i = 0; i < results.length; i++) {
+    const res = results[i];
+    const txt = res[0] ? res[0].transcript : '';
+    if (res.isFinal) {
+      if (i >= processedCount) {
+        processedCount = i + 1;
+        pushFinal(txt);
+      }
+    } else if (i >= processedCount) {
+      interim += txt;
+    }
+  }
+  setLive(interim);
+}
+
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null, listening = false;
 let lastActivity = 0, restarts = 0, restartWindow = 0;
@@ -439,19 +482,17 @@ function build() {
   r.interimResults = true;    // clave: texto mientras habla
   r.maxAlternatives = 1;
 
-  r.onstart = () => { lastActivity = Date.now(); setStatus('Escuchando · ' + srcLang().name, 'on'); };
+  r.onstart = () => {
+    lastActivity = Date.now();
+    processedCount = 0;          // la lista de resultados se reinicia con el motor
+    setStatus('Escuchando · ' + srcLang().name, 'on');
+  };
   r.onaudiostart = () => { lastActivity = Date.now(); };
   r.onspeechstart = () => { lastActivity = Date.now(); setStatus('Te oigo…', 'on'); };
 
   r.onresult = (ev) => {
     lastActivity = Date.now();
-    let interim = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
-      const res = ev.results[i];
-      if (res.isFinal) pushFinal(res[0].transcript);
-      else interim += res[0].transcript;
-    }
-    setLive(interim);
+    processResults(ev.results);
     if (listening) setStatus('Escuchando · ' + srcLang().name, 'on');
   };
 
@@ -529,6 +570,8 @@ function start() {
   recognition = build();
   listening = true;
   restarts = 0;
+  processedCount = 0;
+  recent = [];
   lastActivity = Date.now();
   toggleBtn.textContent = 'Detener';
   toggleBtn.classList.add('on');
@@ -571,6 +614,7 @@ $('copyBtn').onclick = async () => {
 };
 $('clearBtn').onclick = () => {
   lines = []; queue.length = 0; liveOrig = ''; liveTrad = '';
+  recent = [];
   render();
 };
 
