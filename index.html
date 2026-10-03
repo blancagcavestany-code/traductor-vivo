@@ -181,7 +181,7 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Necesita internet y permiso de micrófono · v6</div>
+<div class="hint" id="hint">Necesita internet y permiso de micrófono · v7</div>
 
 <script>
 'use strict';
@@ -385,6 +385,43 @@ const normalize = t => t.toLowerCase().normalize('NFD')
    se sustituye esa linea en vez de anadir otra. */
 const CRECIMIENTO_MS = 15000;
 
+/* Cuantas palabras del final de A coinciden con el principio de B.
+   Al reiniciarse, Android repite el final de lo anterior:
+     A = "bonjour aujourd hui"   B = "aujourd hui il fait beau"  -> 2 */
+function solape(a, b) {
+  const x = a.split(' '), y = b.split(' ');
+  const max = Math.min(x.length, y.length, 15);
+  for (let k = max; k >= 2; k--) {
+    if (x.slice(-k).join(' ') === y.slice(0, k).join(' ')) return k;
+  }
+  return 0;
+}
+
+/* Devuelve el texto original quitandole sus k primeras palabras.
+   Cuenta sobre el texto normalizado, porque "aujourd'hui" son 2 palabras ahi. */
+function quitarPalabras(raw, k) {
+  if (k <= 0) return raw;
+  const trozos = raw.split(/(\s+)/);
+  let contadas = 0, i = 0;
+  for (; i < trozos.length; i++) {
+    if (!trozos[i].trim()) continue;
+    contadas += normalize(trozos[i]).split(' ').filter(Boolean).length;
+    if (contadas >= k) { i++; break; }
+  }
+  return trozos.slice(i).join('').trim();
+}
+
+function extender(prev, textoCompleto, normCompleta) {
+  prev.orig = textoCompleto;
+  prev.norm = normCompleta;
+  prev.at = Date.now();
+  prev.rev++;
+  prev.done = false;
+  queue.push(prev);
+  render();
+  drain();
+}
+
 function pushFinal(text) {
   const t = text.trim();
   if (!t) return;
@@ -397,14 +434,14 @@ function pushFinal(text) {
     if (norm === prev.norm) { prev.at = now; return; }          // calcada
     if (prev.norm.startsWith(norm + ' ')) { prev.at = now; return; } // trozo mas corto
     if (norm.startsWith(prev.norm + ' ')) {                     // la misma, mas larga
-      prev.orig = t;
-      prev.norm = norm;
-      prev.at = now;
-      prev.rev++;
-      prev.done = false;
-      queue.push(prev);
-      render();
-      drain();
+      extender(prev, t, norm);
+      return;
+    }
+    const k = solape(prev.norm, norm);                          // trozos solapados
+    if (k) {
+      const cola = quitarPalabras(t, k);
+      if (!cola) { prev.at = now; return; }
+      extender(prev, prev.orig + ' ' + cola, prev.norm + ' ' + normalize(cola));
       return;
     }
   }
@@ -533,7 +570,7 @@ function restart() {
   const now = Date.now();
   if (now - restartWindow > 10000) { restarts = 0; restartWindow = now; }
   restarts++;
-  const delay = restarts > 6 ? 1500 : 120;      // evita bucle de reinicios
+  const delay = restarts > 6 ? 1500 : 0;   // sin pausa: cada ms de corte es audio perdido      // evita bucle de reinicios
   setTimeout(() => {
     if (!listening) return;
     try { recognition.start(); }
