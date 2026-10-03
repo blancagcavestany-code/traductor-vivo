@@ -182,7 +182,8 @@
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
 <button class="iconbtn" id="videoModeBtn" style="width:100%;height:38px" title="Optimizar la escucha de audio por altavoz">🎬 Audio de vídeo externo</button>
-<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v10</div>
+<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v11</div>
+<div class="hint" id="historyHint">El historial se guarda en este móvil durante 7 días.</div>
 
 <script>
 'use strict';
@@ -335,7 +336,8 @@ function speak(text) {
 /* ============ render ============ */
 let lines = [];          // { orig, trad, done }
 let liveOrig = '', liveTrad = '';
-const MAX_LINES = 400;
+const HISTORY_KEY = 'traductor-history-v1';
+const HISTORY_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
 
@@ -458,6 +460,42 @@ function quitarPalabras(raw, k) {
   return trozos.slice(i).join('').trim();
 }
 
+function saveHistory() {
+  const cutoff = Date.now() - HISTORY_TTL;
+  lines = lines.filter(line => line.at >= cutoff);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(lines.map(line => ({
+      orig: line.orig, trad: line.trad, done: line.done, at: line.at
+    }))));
+    $('historyHint').textContent = 'El historial se guarda en este móvil durante 7 días.';
+  } catch (e) {
+    $('historyHint').textContent = 'No se pudo guardar el historial en este móvil.';
+  }
+}
+
+function restoreHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    const cutoff = Date.now() - HISTORY_TTL;
+    if (Array.isArray(saved)) {
+      lines = saved.filter(item => item && typeof item.orig === 'string' &&
+        Number.isFinite(Number(item.at)) && Number(item.at) >= cutoff)
+        .map(item => {
+          const orig = item.orig.trim();
+          const trad = typeof item.trad === 'string' ? item.trad : '';
+          return {
+            orig, norm: normalize(orig), trad,
+            done: item.done === true && !FAILED.includes(trad),
+            at: Number(item.at), rev: 0
+          };
+        }).filter(line => line.orig && line.norm);
+    }
+  } catch (e) { lines = []; }
+  saveHistory();
+  for (const line of lines) if (!line.done) queue.push(line);
+  if (queue.length) drain();
+}
+
 function extender(prev, textoCompleto, normCompleta) {
   prev.orig = textoCompleto;
   prev.norm = normCompleta;
@@ -465,6 +503,7 @@ function extender(prev, textoCompleto, normCompleta) {
   prev.rev++;
   prev.done = false;
   if (!queue.includes(prev)) queue.push(prev);
+  saveHistory();
   render();
   drain();
 }
@@ -481,8 +520,8 @@ function pushFinal(text) {
   const prev = lines[lines.length - 1];
 
   if (prev && now - prev.at < CRECIMIENTO_MS) {
-    if (norm === prev.norm) { prev.at = now; return; }          // calcada
-    if (prev.norm.startsWith(norm + ' ')) { prev.at = now; return; } // trozo mas corto
+    if (norm === prev.norm) { prev.at = now; saveHistory(); return; } // calcada
+    if (prev.norm.startsWith(norm + ' ')) { prev.at = now; saveHistory(); return; } // trozo mas corto
     if (norm.startsWith(prev.norm + ' ')) {                     // la misma, mas larga
       extender(prev, t, norm);
       return;
@@ -498,8 +537,8 @@ function pushFinal(text) {
 
   const line = { orig: t, norm, at: now, trad: '', done: false, rev: 0 };
   lines.push(line);
-  if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES);
   queue.push(line);
+  saveHistory();
   render();
   drain();
 }
@@ -517,6 +556,7 @@ async function drain() {
       if (line.rev !== rev) continue;    // la frase crecio mientras se traducia
       line.trad = t;
       line.done = !FAILED.includes(t);
+      saveHistory();
       render();
       if (line.done) speak(line.trad);
     } finally {
@@ -535,6 +575,13 @@ function retryPending() {
   if (n) { drain(); return n; }
   return 0;
 }
+
+restoreHistory();
+setInterval(() => {
+  const count = lines.length;
+  saveHistory();
+  if (lines.length !== count) render();
+}, 60 * 60 * 1000);
 
 /* traducción del tramo que se está diciendo ahora mismo */
 let liveTimer = null, liveSeq = 0;
@@ -770,7 +817,7 @@ $('videoModeBtn').onclick = () => {
   applyPrefs();
   $('hint').textContent = videoMode
     ? 'Reproduce el vídeo por altavoz cerca del móvil; evita los auriculares.'
-    : 'Inglés → español · necesita internet y permiso de micrófono · v10';
+    : 'Inglés → español · necesita internet y permiso de micrófono · v11';
 };
 $('copyBtn').onclick = async () => {
   const txt = lines.map(l => l.orig + '\n→ ' + l.trad).join('\n\n');
@@ -779,6 +826,7 @@ $('copyBtn').onclick = async () => {
 };
 $('clearBtn').onclick = () => {
   lines = []; queue.length = 0; liveSeq++; liveOrig = ''; liveTrad = '';
+  saveHistory();
   render();
 };
 
