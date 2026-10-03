@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Traductor en vivo</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b0b0c">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --card: #17181b;
+    --card2: #202126;
+    --accent: #3ddc84;
+    --red: #e74c3c;
+    --text: #f6f6f7;
+    --muted: #8b8d93;
+    --fs: 28px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overscroll-behavior: none; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, system-ui, Roboto, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom);
+  }
+
+  /* ---------- barra superior ---------- */
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0 6px;
+  }
+  select {
+    background: var(--card2);
+    color: var(--text);
+    border: none;
+    border-radius: 10px;
+    padding: 9px 8px;
+    font-size: 14px;
+    flex: 1;
+    min-width: 0;
+    appearance: none;
+    text-align: center;
+  }
+  .arrow { color: var(--muted); font-size: 13px; }
+  .iconbtn {
+    background: var(--card2);
+    color: var(--text);
+    border: none;
+    border-radius: 10px;
+    width: 38px;
+    height: 38px;
+    font-size: 15px;
+    font-weight: 600;
+    flex: 0 0 auto;
+  }
+  .iconbtn.active { background: var(--accent); color: #063; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--muted);
+    min-height: 20px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex: 0 0 auto;
+  }
+  .status.on .dot { background: var(--accent); animation: pulse 1.3s infinite; }
+  .status.on { color: var(--accent); }
+  .status.err { color: #f0a; }
+  .status.err .dot { background: #f0a; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* ---------- paneles ---------- */
+  .panel { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .box {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 12px 14px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .box.original {
+    flex: 0 0 auto;
+    max-height: 19vh;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  .box.translated {
+    flex: 1;
+    min-height: 0;
+    font-size: var(--fs);
+    line-height: 1.32;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  body.hide-original .box.original { display: none; }
+  .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #5f6168;
+    margin-bottom: 5px;
+    display: block;
+    position: sticky;
+    top: -12px;
+    background: var(--card);
+    padding: 4px 0;
+  }
+  .line { margin: 0 0 10px; }
+  .line.pending { opacity: .5; }
+  .line.live { opacity: .62; font-style: italic; font-weight: 500; }
+  .placeholder { color: var(--muted); font-size: 15px; font-weight: 400; font-style: italic; }
+  .rtl { direction: rtl; text-align: right; }
+
+  /* ---------- controles ---------- */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0 8px;
+  }
+  #toggle {
+    flex: 1;
+    border: none;
+    border-radius: 14px;
+    padding: 18px 0;
+    font-size: 18px;
+    font-weight: 700;
+    background: var(--accent);
+    color: #063;
+  }
+  #toggle.on { background: var(--red); color: #fff; }
+  .hint { text-align: center; font-size: 11.5px; color: #5f6168; padding-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <select id="src" aria-label="Idioma del guía"></select>
+  <span class="arrow">→</span>
+  <select id="dst" aria-label="Tu idioma"></select>
+</div>
+
+<div class="status" id="status"><span class="dot"></span><span id="statusText">Pulsa Escuchar</span></div>
+
+<div class="panel">
+  <div class="box original" id="originalBox">
+    <span class="label" id="origLabel">Original</span>
+    <div id="original"></div>
+  </div>
+  <div class="box translated" id="transBox">
+    <span class="label">Traducción</span>
+    <div id="translated"><div class="placeholder">La traducción aparecerá aquí, frase a frase, mientras el guía habla.</div></div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="iconbtn" id="fsDown" title="Texto más pequeño">A-</button>
+  <button id="toggle">Escuchar</button>
+  <button class="iconbtn" id="fsUp" title="Texto más grande">A+</button>
+</div>
+<div class="bar" style="padding-top:0">
+  <button class="iconbtn" id="eyeBtn" style="flex:1" title="Mostrar/ocultar original">Original</button>
+  <button class="iconbtn" id="voiceBtn" style="flex:1" title="Leer en voz alta">🔊 Voz</button>
+  <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
+  <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
+</div>
+<div class="hint" id="hint">Necesita internet y permiso de micrófono</div>
+
+<script>
+'use strict';
+
+/* ============ idiomas ============ */
+const LANGS = [
+  { code: 'ar-MA', tl: 'ar', name: 'Árabe (Marruecos)', rtl: true },
+  { code: 'fr-FR', tl: 'fr', name: 'Francés' },
+  { code: 'ar-SA', tl: 'ar', name: 'Árabe estándar', rtl: true },
+  { code: 'en-US', tl: 'en', name: 'Inglés' },
+  { code: 'es-ES', tl: 'es', name: 'Español' },
+  { code: 'it-IT', tl: 'it', name: 'Italiano' },
+  { code: 'de-DE', tl: 'de', name: 'Alemán' },
+  { code: 'pt-PT', tl: 'pt', name: 'Portugués' }
+];
+
+const $ = id => document.getElementById(id);
+const srcSel = $('src'), dstSel = $('dst');
+const statusEl = $('status'), statusText = $('statusText');
+const originalEl = $('original'), translatedEl = $('translated');
+const toggleBtn = $('toggle'), origLabel = $('origLabel');
+
+LANGS.forEach(l => {
+  srcSel.add(new Option(l.name, l.code));
+  dstSel.add(new Option(l.name, l.code));
+});
+
+const store = {
+  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+
+srcSel.value = store.get('src', 'ar-MA');
+dstSel.value = store.get('dst', 'es-ES');
+let fontSize = parseInt(store.get('fs', '28'), 10);
+let showOriginal = store.get('orig', '1') === '1';
+let voiceOn = store.get('voice', '0') === '1';
+
+const srcLang = () => LANGS.find(l => l.code === srcSel.value) || LANGS[0];
+const dstLang = () => LANGS.find(l => l.code === dstSel.value) || LANGS[4];
+
+function applyPrefs() {
+  document.documentElement.style.setProperty('--fs', fontSize + 'px');
+  document.body.classList.toggle('hide-original', !showOriginal);
+  $('eyeBtn').classList.toggle('active', showOriginal);
+  $('voiceBtn').classList.toggle('active', voiceOn);
+  origLabel.textContent = 'Original · ' + srcLang().name;
+  originalEl.classList.toggle('rtl', !!srcLang().rtl);
+  translatedEl.classList.toggle('rtl', !!dstLang().rtl);
+}
+
+/* ============ traducción (3 proveedores con fallback) ============ */
+const cache = new Map();
+const FAILED = ['…', '(sin conexión)'];
+let provider = 0;
+
+async function fetchT(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (!r.ok) throw new Error('http ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+const PROVIDERS = [
+  async (q, sl, tl) => {
+    const d = await fetchT('https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=' +
+      sl + '&tl=' + tl + '&q=' + encodeURIComponent(q), 4000);
+    return d[0].map(s => s[0]).join('');
+  },
+  async (q, sl, tl) => {
+    const d = await fetchT('https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=' +
+      sl + '&tl=' + tl + '&q=' + encodeURIComponent(q), 4000);
+    if (Array.isArray(d)) return (Array.isArray(d[0]) ? d[0][0] : d[0]) || '';
+    return d.sentences ? d.sentences.map(s => s.trans).join('') : '';
+  },
+  async (q, sl, tl) => {
+    const d = await fetchT('https://api.mymemory.translated.net/get?q=' +
+      encodeURIComponent(q) + '&langpair=' + sl + '|' + tl, 5000);
+    return d.responseData.translatedText;
+  }
+];
+
+/* trozos cortos: la petición va por URL (GET) y tiene límite de longitud */
+function chunk(text, max) {
+  if (text.length <= max) return [text];
+  const out = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf(' ', max);
+    if (cut < max * 0.5) cut = max;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+async function translate(text) {
+  const q = text.trim();
+  if (!q) return '';
+  const sl = srcLang().tl, tl = dstLang().tl;
+  if (sl === tl) return q;
+  const key = sl + '|' + tl + '|' + q;
+  if (cache.has(key)) return cache.get(key);
+
+  const parts = chunk(q, 900);
+  for (let attempt = 0; attempt < PROVIDERS.length; attempt++) {
+    const i = (provider + attempt) % PROVIDERS.length;
+    try {
+      const res = [];
+      for (const p of parts) res.push(await PROVIDERS[i](p, sl, tl));
+      const out = res.join(' ').trim();
+      if (!out) throw new Error('vacío');
+      provider = i;                                  // el que funciona se queda primero
+      if (cache.size > 600) cache.clear();
+      cache.set(key, out);
+      return out;
+    } catch (e) { /* siguiente proveedor */ }
+  }
+  return navigator.onLine ? '…' : '(sin conexión)';
+}
+
+/* ============ voz de salida (opcional, con auriculares) ============ */
+function speak(text) {
+  if (!voiceOn || !window.speechSynthesis || !text) return;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = dstLang().code;
+    u.rate = 1.08;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+/* ============ render ============ */
+let lines = [];          // { orig, trad, done }
+let liveOrig = '', liveTrad = '';
+const MAX_LINES = 400;
+
+function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
+
+function render() {
+  const stickT = nearBottom($('transBox')), stickO = nearBottom($('originalBox'));
+
+  if (!lines.length && !liveOrig) {
+    translatedEl.innerHTML = '<div class="placeholder">La traducción aparecerá aquí, frase a frase, mientras el guía habla.</div>';
+    originalEl.textContent = '';
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const l of lines) {
+      const d = document.createElement('div');
+      d.className = 'line' + (l.done ? '' : ' pending');
+      d.textContent = l.trad || '…';
+      frag.appendChild(d);
+    }
+    if (liveTrad || liveOrig) {
+      const d = document.createElement('div');
+      d.className = 'line live';
+      d.textContent = liveTrad || '…';
+      frag.appendChild(d);
+    }
+    translatedEl.replaceChildren(frag);
+
+    const of = document.createDocumentFragment();
+    for (const l of lines) {
+      const d = document.createElement('div');
+      d.className = 'line';
+      d.textContent = l.orig;
+      of.appendChild(d);
+    }
+    if (liveOrig) {
+      const d = document.createElement('div');
+      d.className = 'line live';
+      d.textContent = liveOrig;
+      of.appendChild(d);
+    }
+    originalEl.replaceChildren(of);
+  }
+
+  if (stickT) $('transBox').scrollTop = $('transBox').scrollHeight;
+  if (stickO) $('originalBox').scrollTop = $('originalBox').scrollHeight;
+}
+
+/* cola en serie: conserva el orden de las frases aunque una traducción tarde */
+const queue = [];
+let draining = false;
+
+function pushFinal(text) {
+  const t = text.trim();
+  if (!t) return;
+  lines.push({ orig: t, trad: '', done: false });
+  if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES);
+  const idx = lines.length - 1;
+  queue.push(idx);
+  render();
+  drain();
+}
+
+async function drain() {
+  if (draining) return;
+  draining = true;
+  while (queue.length) {
+    const i = queue.shift();
+    const line = lines[i];
+    if (!line) continue;
+    const t = await translate(line.orig);
+    line.trad = t;
+    line.done = !FAILED.includes(t);
+    render();
+    if (line.done) speak(line.trad);
+  }
+  draining = false;
+}
+
+/* reintenta las frases que se quedaron sin traducir por falta de cobertura */
+function retryPending() {
+  let n = 0;
+  lines.forEach((l, i) => {
+    if (!l.done && !queue.includes(i)) { queue.push(i); n++; }
+  });
+  if (n) { drain(); return n; }
+  return 0;
+}
+
+/* traducción del tramo que se está diciendo ahora mismo */
+let liveTimer = null, liveSeq = 0;
+function setLive(text) {
+  liveOrig = text;
+  if (!text.trim()) { liveTrad = ''; render(); return; }
+  render();
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(async () => {
+    const seq = ++liveSeq;
+    const t = await translate(text);
+    if (seq === liveSeq) { liveTrad = t; render(); }
+  }, 350);
+}
+
+/* ============ reconocimiento ============ */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null, listening = false;
+let lastActivity = 0, restarts = 0, restartWindow = 0;
+
+function setStatus(text, kind) {
+  statusText.textContent = text;
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+function build() {
+  const r = new SR();
+  r.lang = srcSel.value;
+  r.continuous = true;        // clave: no se corta en cada frase
+  r.interimResults = true;    // clave: texto mientras habla
+  r.maxAlternatives = 1;
+
+  r.onstart = () => { lastActivity = Date.now(); setStatus('Escuchando · ' + srcLang().name, 'on'); };
+  r.onaudiostart = () => { lastActivity = Date.now(); };
+  r.onspeechstart = () => { lastActivity = Date.now(); setStatus('Te oigo…', 'on'); };
+
+  r.onresult = (ev) => {
+    lastActivity = Date.now();
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (res.isFinal) pushFinal(res[0].transcript);
+      else interim += res[0].transcript;
+    }
+    setLive(interim);
+    if (listening) setStatus('Escuchando · ' + srcLang().name, 'on');
+  };
+
+  r.onerror = (ev) => {
+    if (ev.error === 'no-speech' || ev.error === 'aborted') return;
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      stop('Micrófono denegado. Permítelo en los ajustes del navegador.', 'err');
+      return;
+    }
+    if (ev.error === 'network') { setStatus('Sin conexión · reintentando…', 'err'); return; }
+    if (ev.error === 'language-not-supported') {
+      stop('Tu móvil no soporta ' + srcLang().name + '. Prueba otro idioma.', 'err');
+      return;
+    }
+    setStatus('Error: ' + ev.error + ' · reintentando…', 'err');
+  };
+
+  r.onend = () => { if (listening) restart(); };
+  return r;
+}
+
+function restart() {
+  const now = Date.now();
+  if (now - restartWindow > 10000) { restarts = 0; restartWindow = now; }
+  restarts++;
+  const delay = restarts > 6 ? 1500 : 120;      // evita bucle de reinicios
+  setTimeout(() => {
+    if (!listening) return;
+    try { recognition.start(); }
+    catch (e) {
+      try { recognition.abort(); } catch (e2) {}
+      recognition = build();
+      try { recognition.start(); } catch (e3) {
+        setTimeout(() => { if (listening) restart(); }, 800);
+      }
+    }
+  }, delay);
+}
+
+/* vigilante: si Chrome/Safari se queda mudo sin avisar, reinicia */
+setInterval(() => {
+  if (!listening) return;
+  if (Date.now() - lastActivity > 20000) {
+    lastActivity = Date.now();
+    try { recognition.abort(); } catch (e) {}   // onend dispara restart()
+  }
+}, 5000);
+
+setInterval(() => { if (navigator.onLine) retryPending(); }, 8000);
+
+/* ============ pantalla encendida ============ */
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && listening) {
+    keepAwake(true);
+    lastActivity = Date.now();
+  }
+});
+
+/* ============ arranque / parada ============ */
+function start() {
+  if (!SR) {
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setStatus(ios ? 'En iPhone usa Safari (Chrome no puede oír).' : 'Usa Chrome: este navegador no reconoce voz.', 'err');
+    return;
+  }
+  recognition = build();
+  listening = true;
+  restarts = 0;
+  lastActivity = Date.now();
+  toggleBtn.textContent = 'Detener';
+  toggleBtn.classList.add('on');
+  srcSel.disabled = true;
+  setStatus('Iniciando…', 'on');
+  keepAwake(true);
+  try { recognition.start(); } catch (e) { restart(); }
+}
+
+function stop(msg, kind) {
+  listening = false;
+  clearTimeout(liveTimer);
+  liveOrig = ''; liveTrad = '';
+  try { recognition && recognition.stop(); } catch (e) {}
+  toggleBtn.textContent = 'Escuchar';
+  toggleBtn.classList.remove('on');
+  srcSel.disabled = false;
+  keepAwake(false);
+  setStatus(msg || 'Detenido', kind || '');
+  render();
+}
+
+toggleBtn.addEventListener('click', () => listening ? stop() : start());
+
+/* ============ botones ============ */
+$('fsUp').onclick = () => { fontSize = Math.min(56, fontSize + 3); store.set('fs', fontSize); applyPrefs(); };
+$('fsDown').onclick = () => { fontSize = Math.max(16, fontSize - 3); store.set('fs', fontSize); applyPrefs(); };
+$('eyeBtn').onclick = () => { showOriginal = !showOriginal; store.set('orig', showOriginal ? '1' : '0'); applyPrefs(); };
+$('voiceBtn').onclick = () => {
+  voiceOn = !voiceOn;
+  store.set('voice', voiceOn ? '1' : '0');
+  if (!voiceOn && window.speechSynthesis) speechSynthesis.cancel();
+  applyPrefs();
+  if (voiceOn) $('hint').textContent = 'Voz activada: usa auriculares o el micro se oirá a sí mismo';
+};
+$('copyBtn').onclick = async () => {
+  const txt = lines.map(l => l.orig + '\n→ ' + l.trad).join('\n\n');
+  try { await navigator.clipboard.writeText(txt); $('hint').textContent = 'Copiado (' + lines.length + ' frases)'; }
+  catch (e) { $('hint').textContent = 'No se pudo copiar'; }
+};
+$('clearBtn').onclick = () => {
+  lines = []; queue.length = 0; liveOrig = ''; liveTrad = '';
+  render();
+};
+
+srcSel.onchange = () => {
+  store.set('src', srcSel.value);
+  applyPrefs();
+  if (listening) { stop(); start(); }
+};
+dstSel.onchange = () => { store.set('dst', dstSel.value); applyPrefs(); cache.clear(); render(); };
+
+window.addEventListener('offline', () => { if (listening) setStatus('Sin conexión', 'err'); });
+window.addEventListener('online', () => {
+  const n = retryPending();
+  if (listening) setStatus(n ? 'Conexión recuperada · recuperando ' + n + ' frases' : 'Escuchando · ' + srcLang().name, 'on');
+  else if (n) setStatus('Conexión recuperada · recuperando ' + n + ' frases');
+});
+
+applyPrefs();
+render();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
