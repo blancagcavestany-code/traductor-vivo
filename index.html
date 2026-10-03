@@ -181,7 +181,7 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Necesita internet y permiso de micrófono</div>
+<div class="hint" id="hint">Necesita internet y permiso de micrófono · v5</div>
 
 <script>
 'use strict';
@@ -367,38 +367,52 @@ function render() {
   if (stickO) $('originalBox').scrollTop = $('originalBox').scrollHeight;
 }
 
-/* cola en serie: conserva el orden de las frases aunque una traducción tarde */
+/* Cola en serie: conserva el orden de las frases aunque una traduccion tarde.
+   Guarda la LINEA, no su indice: las lineas se recortan al llegar al tope. */
 const queue = [];
 let draining = false;
 
-let recent = [];   // ultimas frases aceptadas, para no repetirlas
-
-/* Deja solo letras y numeros: asi "Suivez-moi." y "suivez moi" son la misma frase.
-   Android reenvia lo mismo con distinta puntuacion despues de cada reinicio. */
+/* Deja solo letras y numeros: asi "Suivez-moi." y "suivez moi" son la misma frase. */
 const normalize = t => t.toLowerCase().normalize('NFD')
   .replace(/[^\p{L}\p{N}\s]/gu, ' ')
   .replace(/\s+/g, ' ')
   .trim();
 
+/* Chrome en Android va cerrando como DEFINITIVA cada version parcial de la frase:
+     "bonjour" / "bonjour aujourd'hui" / "bonjour aujourd'hui il fait beau"
+   Cada una llega con indice nuevo y texto distinto, asi que no vale con filtrar
+   repetidos. Si la frase nueva empieza por la anterior, es la misma creciendo:
+   se sustituye esa linea en vez de anadir otra. */
+const CRECIMIENTO_MS = 15000;
+
 function pushFinal(text) {
   const t = text.trim();
   if (!t) return;
   const norm = normalize(t);
+  if (!norm) return;
   const now = Date.now();
-  /* El reenvio de Android llega en milisegundos o tras un reinicio (~1-2 s).
-     Frases largas: ventana amplia. Palabras sueltas ("si", "vale"): ventana corta,
-     para no tragarse una repeticion de verdad del guia. */
-  const ventana = norm.length >= 12 ? 8000 : 2500;
-  const ultima = recent[recent.length - 1];
-  /* Solo bloquea el calco de la frase anterior: el reenvio de Android siempre es
-     consecutivo. Si el guia dice "oui... non... oui", el segundo "oui" si pasa. */
-  if (norm && ultima && ultima.norm === norm && now - ultima.at < ventana) return;
-  recent.push({ norm, at: now });
-  if (recent.length > 3) recent.shift();
-  lines.push({ orig: t, trad: '', done: false });
+  const prev = lines[lines.length - 1];
+
+  if (prev && now - prev.at < CRECIMIENTO_MS) {
+    if (norm === prev.norm) { prev.at = now; return; }          // calcada
+    if (prev.norm.startsWith(norm + ' ')) { prev.at = now; return; } // trozo mas corto
+    if (norm.startsWith(prev.norm + ' ')) {                     // la misma, mas larga
+      prev.orig = t;
+      prev.norm = norm;
+      prev.at = now;
+      prev.rev++;
+      prev.done = false;
+      queue.push(prev);
+      render();
+      drain();
+      return;
+    }
+  }
+
+  const line = { orig: t, norm, at: now, trad: '', done: false, rev: 0 };
+  lines.push(line);
   if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES);
-  const idx = lines.length - 1;
-  queue.push(idx);
+  queue.push(line);
   render();
   drain();
 }
@@ -407,10 +421,11 @@ async function drain() {
   if (draining) return;
   draining = true;
   while (queue.length) {
-    const i = queue.shift();
-    const line = lines[i];
+    const line = queue.shift();
     if (!line) continue;
+    const rev = line.rev;
     const t = await translate(line.orig);
+    if (line.rev !== rev) continue;      // la frase crecio mientras se traducia
     line.trad = t;
     line.done = !FAILED.includes(t);
     render();
@@ -422,9 +437,9 @@ async function drain() {
 /* reintenta las frases que se quedaron sin traducir por falta de cobertura */
 function retryPending() {
   let n = 0;
-  lines.forEach((l, i) => {
-    if (!l.done && !queue.includes(i)) { queue.push(i); n++; }
-  });
+  for (const l of lines) {
+    if (!l.done && !queue.includes(l)) { queue.push(l); n++; }
+  }
   if (n) { drain(); return n; }
   return 0;
 }
@@ -571,7 +586,6 @@ function start() {
   listening = true;
   restarts = 0;
   processedCount = 0;
-  recent = [];
   lastActivity = Date.now();
   toggleBtn.textContent = 'Detener';
   toggleBtn.classList.add('on');
@@ -614,7 +628,6 @@ $('copyBtn').onclick = async () => {
 };
 $('clearBtn').onclick = () => {
   lines = []; queue.length = 0; liveOrig = ''; liveTrad = '';
-  recent = [];
   render();
 };
 
