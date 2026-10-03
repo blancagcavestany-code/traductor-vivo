@@ -181,7 +181,8 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v9</div>
+<button class="iconbtn" id="videoModeBtn" style="width:100%;height:38px" title="Optimizar la escucha de audio por altavoz">🎬 Audio de vídeo externo</button>
+<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v10</div>
 
 <script>
 'use strict';
@@ -226,6 +227,8 @@ dstSel.value = store.get('dst', 'es-ES');
 let fontSize = parseInt(store.get('fs', '28'), 10);
 let showOriginal = store.get('orig', '1') === '1';
 let voiceOn = store.get('voice', '0') === '1';
+let videoMode = store.get('video-mode', '0') === '1';
+let videoAudioStream = null, videoAudioTrack = null;
 
 const srcLang = () => LANGS.find(l => l.code === srcSel.value) || LANGS[0];
 const dstLang = () => LANGS.find(l => l.code === dstSel.value) || LANGS[4];
@@ -235,6 +238,10 @@ function applyPrefs() {
   document.body.classList.toggle('hide-original', !showOriginal);
   $('eyeBtn').classList.toggle('active', showOriginal);
   $('voiceBtn').classList.toggle('active', voiceOn);
+  $('videoModeBtn').classList.toggle('active', videoMode);
+  $('videoModeBtn').textContent = videoMode ? '🎬 Audio de vídeo externo · activado' : '🎬 Audio de vídeo externo';
+  $('videoModeBtn').disabled = listening;
+  if (videoMode && !listening) $('hint').textContent = 'Reproduce el vídeo por altavoz cerca del móvil; evita los auriculares.';
   origLabel.textContent = 'Original · ' + srcLang().name;
   originalEl.classList.toggle('rtl', !!srcLang().rtl);
   translatedEl.classList.toggle('rtl', !!dstLang().rtl);
@@ -618,6 +625,28 @@ function build() {
   return r;
 }
 
+function releaseVideoAudio() {
+  if (videoAudioStream) videoAudioStream.getTracks().forEach(track => track.stop());
+  videoAudioStream = null;
+  videoAudioTrack = null;
+}
+
+function startRecognition() {
+  if (!videoAudioTrack) { recognition.start(); return; }
+  try {
+    recognition.start(videoAudioTrack);
+  } catch (e) {
+    // Compatibilidad: algunos navegadores aún no aceptan una pista de audio.
+    releaseVideoAudio();
+    videoMode = false;
+    store.set('video-mode', '0');
+    applyPrefs();
+    setStatus('Este navegador no admite el modo de vídeo; sigo con el micrófono normal.', '');
+    recognition = build();
+    recognition.start();
+  }
+}
+
 function restart(waitMs = 0) {
   if (restartTimer !== null) return;
   const now = Date.now();
@@ -627,11 +656,11 @@ function restart(waitMs = 0) {
   restartTimer = setTimeout(() => {
     restartTimer = null;
     if (!listening) return;
-    try { recognition.start(); }
+    try { startRecognition(); }
     catch (e) {
       try { recognition.abort(); } catch (e2) {}
       recognition = build();
-      try { recognition.start(); } catch (e3) {
+      try { startRecognition(); } catch (e3) {
         restartTimer = setTimeout(() => { restartTimer = null; if (listening) restart(); }, 800);
       }
     }
@@ -669,13 +698,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ============ arranque / parada ============ */
-function start() {
+async function start() {
   if (!SR) {
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setStatus(ios ? 'En iPhone usa Safari (Chrome no puede oír).' : 'Usa Chrome: este navegador no reconoce voz.', 'err');
     return;
   }
-  recognition = build();
   listening = true;
   restarts = 0;
   processedCount = 0;
@@ -683,9 +711,26 @@ function start() {
   toggleBtn.textContent = 'Detener';
   toggleBtn.classList.add('on');
   srcSel.disabled = true;
+  $('videoModeBtn').disabled = true;
   setStatus('Iniciando…', 'on');
   keepAwake(true);
-  try { recognition.start(); } catch (e) { restart(); }
+  if (videoMode) {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('sin captura de micrófono');
+      videoAudioStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        video: false
+      });
+      videoAudioTrack = videoAudioStream.getAudioTracks()[0];
+      if (!listening) { releaseVideoAudio(); return; }
+      if (!videoAudioTrack) throw new Error('sin pista de audio');
+    } catch (e) {
+      if (listening) stop('No se pudo acceder al micrófono para el modo de vídeo.', 'err');
+      return;
+    }
+  }
+  recognition = build();
+  try { startRecognition(); } catch (e) { restart(); }
 }
 
 function stop(msg, kind) {
@@ -695,10 +740,12 @@ function stop(msg, kind) {
   clearTimeout(liveTimer);
   liveOrig = ''; liveTrad = '';
   try { recognition && recognition.stop(); } catch (e) {}
+  releaseVideoAudio();
   toggleBtn.textContent = 'Escuchar';
   toggleBtn.classList.remove('on');
   srcSel.disabled = false;
   keepAwake(false);
+  $('videoModeBtn').disabled = false;
   setStatus(msg || 'Detenido', kind || '');
   render();
 }
@@ -715,6 +762,15 @@ $('voiceBtn').onclick = () => {
   if (!voiceOn && window.speechSynthesis) speechSynthesis.cancel();
   applyPrefs();
   if (voiceOn) $('hint').textContent = 'Voz activada: usa auriculares o el micro se oirá a sí mismo';
+};
+$('videoModeBtn').onclick = () => {
+  if (listening) return;
+  videoMode = !videoMode;
+  store.set('video-mode', videoMode ? '1' : '0');
+  applyPrefs();
+  $('hint').textContent = videoMode
+    ? 'Reproduce el vídeo por altavoz cerca del móvil; evita los auriculares.'
+    : 'Inglés → español · necesita internet y permiso de micrófono · v10';
 };
 $('copyBtn').onclick = async () => {
   const txt = lines.map(l => l.orig + '\n→ ' + l.trad).join('\n\n');
