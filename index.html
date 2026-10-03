@@ -181,7 +181,7 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Necesita internet y permiso de micrófono · v5</div>
+<div class="hint" id="hint">Necesita internet y permiso de micrófono · v6</div>
 
 <script>
 'use strict';
@@ -648,8 +648,31 @@ window.addEventListener('online', () => {
 applyPrefs();
 render();
 
+/* Actualizacion automatica: si hay version nueva en el servidor, la app se
+   recarga sola. Nunca en mitad de una escucha. */
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const teniaControl = !!navigator.serviceWorker.controller;
+  let yaRecargada = false;
+
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    reg.update().catch(() => {});
+    setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+  }).catch(() => {});
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!teniaControl || yaRecargada) return;   // primera instalacion: no recargues
+    if (listening) return;                      // no cortes al guia a media frase
+    yaRecargada = true;
+    location.reload();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      navigator.serviceWorker.getRegistration()
+        .then(reg => reg && reg.update())
+        .catch(() => {});
+    }
+  });
 }
 </script>
 </body>
