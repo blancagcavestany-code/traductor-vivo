@@ -181,7 +181,7 @@
   <button class="iconbtn" id="copyBtn" style="flex:1" title="Copiar todo">Copiar</button>
   <button class="iconbtn" id="clearBtn" style="flex:1" title="Borrar">Borrar</button>
 </div>
-<div class="hint" id="hint">Necesita internet y permiso de micrófono · v7</div>
+<div class="hint" id="hint">Inglés → español · necesita internet y permiso de micrófono · v8</div>
 
 <script>
 'use strict';
@@ -214,7 +214,14 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} }
 };
 
-srcSel.value = store.get('src', 'ar-MA');
+// Inglés es el idioma principal para este uso. Migra una sola vez el valor
+// inicial antiguo (árabe de Marruecos); después se respeta lo que elija la usuaria.
+const savedSource = store.get('src', '');
+if (store.get('src-default-v2', '0') !== '1') {
+  if (!savedSource || savedSource === 'ar-MA') store.set('src', 'en-US');
+  store.set('src-default-v2', '1');
+}
+srcSel.value = store.get('src', 'en-US');
 dstSel.value = store.get('dst', 'es-ES');
 let fontSize = parseInt(store.get('fs', '28'), 10);
 let showOriginal = store.get('orig', '1') === '1';
@@ -370,6 +377,7 @@ function render() {
 /* Cola en serie: conserva el orden de las frases aunque una traduccion tarde.
    Guarda la LINEA, no su indice: las lineas se recortan al llegar al tope. */
 const queue = [];
+const inFlight = new Set();
 let draining = false;
 
 /* Deja solo letras y numeros: asi "Suivez-moi." y "suivez moi" son la misma frase. */
@@ -417,7 +425,7 @@ function extender(prev, textoCompleto, normCompleta) {
   prev.at = Date.now();
   prev.rev++;
   prev.done = false;
-  queue.push(prev);
+  if (!queue.includes(prev)) queue.push(prev);
   render();
   drain();
 }
@@ -460,13 +468,18 @@ async function drain() {
   while (queue.length) {
     const line = queue.shift();
     if (!line) continue;
+    inFlight.add(line);
     const rev = line.rev;
-    const t = await translate(line.orig);
-    if (line.rev !== rev) continue;      // la frase crecio mientras se traducia
-    line.trad = t;
-    line.done = !FAILED.includes(t);
-    render();
-    if (line.done) speak(line.trad);
+    try {
+      const t = await translate(line.orig);
+      if (line.rev !== rev) continue;    // la frase crecio mientras se traducia
+      line.trad = t;
+      line.done = !FAILED.includes(t);
+      render();
+      if (line.done) speak(line.trad);
+    } finally {
+      inFlight.delete(line);
+    }
   }
   draining = false;
 }
@@ -475,7 +488,7 @@ async function drain() {
 function retryPending() {
   let n = 0;
   for (const l of lines) {
-    if (!l.done && !queue.includes(l)) { queue.push(l); n++; }
+    if (!l.done && !queue.includes(l) && !inFlight.has(l)) { queue.push(l); n++; }
   }
   if (n) { drain(); return n; }
   return 0;
@@ -484,12 +497,12 @@ function retryPending() {
 /* traducción del tramo que se está diciendo ahora mismo */
 let liveTimer = null, liveSeq = 0;
 function setLive(text) {
+  const seq = ++liveSeq;
   liveOrig = text;
+  clearTimeout(liveTimer);
   if (!text.trim()) { liveTrad = ''; render(); return; }
   render();
-  clearTimeout(liveTimer);
   liveTimer = setTimeout(async () => {
-    const seq = ++liveSeq;
     const t = await translate(text);
     if (seq === liveSeq) { liveTrad = t; render(); }
   }, 350);
@@ -520,7 +533,7 @@ function processResults(results) {
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null, listening = false;
-let lastActivity = 0, restarts = 0, restartWindow = 0;
+let lastActivity = 0, restarts = 0, restartWindow = 0, restartTimer = null;
 
 function setStatus(text, kind) {
   statusText.textContent = text;
@@ -567,18 +580,20 @@ function build() {
 }
 
 function restart() {
+  if (restartTimer !== null) return;
   const now = Date.now();
   if (now - restartWindow > 10000) { restarts = 0; restartWindow = now; }
   restarts++;
   const delay = restarts > 6 ? 1500 : 0;   // sin pausa: cada ms de corte es audio perdido      // evita bucle de reinicios
-  setTimeout(() => {
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
     if (!listening) return;
     try { recognition.start(); }
     catch (e) {
       try { recognition.abort(); } catch (e2) {}
       recognition = build();
       try { recognition.start(); } catch (e3) {
-        setTimeout(() => { if (listening) restart(); }, 800);
+        restartTimer = setTimeout(() => { restartTimer = null; if (listening) restart(); }, 800);
       }
     }
   }, delay);
@@ -634,6 +649,8 @@ function start() {
 
 function stop(msg, kind) {
   listening = false;
+  clearTimeout(restartTimer);
+  restartTimer = null;
   clearTimeout(liveTimer);
   liveOrig = ''; liveTrad = '';
   try { recognition && recognition.stop(); } catch (e) {}
@@ -664,7 +681,7 @@ $('copyBtn').onclick = async () => {
   catch (e) { $('hint').textContent = 'No se pudo copiar'; }
 };
 $('clearBtn').onclick = () => {
-  lines = []; queue.length = 0; liveOrig = ''; liveTrad = '';
+  lines = []; queue.length = 0; liveSeq++; liveOrig = ''; liveTrad = '';
   render();
 };
 
